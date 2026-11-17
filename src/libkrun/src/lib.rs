@@ -35,6 +35,7 @@ use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::fd::{BorrowedFd, FromRawFd};
 #[cfg(unix)]
+#[cfg(not(target_os = "macos"))]
 use std::os::unix::net::UnixListener;
 #[cfg(windows)]
 use std::os::windows::io::BorrowedHandle;
@@ -2506,6 +2507,9 @@ mod control_command_tests {
 #[cfg(not(target_os = "windows"))]
 fn start_control_socket(path: PathBuf, vmm: Arc<Mutex<vmm::Vmm>>) -> std::io::Result<()> {
     let _ = std::fs::remove_file(&path);
+    #[cfg(target_os = "macos")]
+    let listener = utils::macos::unix_socket::bind_listener(&path)?;
+    #[cfg(not(target_os = "macos"))]
     let listener = UnixListener::bind(&path)?;
 
     std::thread::Builder::new()

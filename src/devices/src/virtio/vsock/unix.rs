@@ -412,25 +412,19 @@ impl Proxy for UnixProxy {
     fn connect(&mut self, _pkt: &VsockPacket, _req: TsiConnectReq) -> ProxyUpdate {
         let mut update = ProxyUpdate::default();
 
-        let result = match SockAddr::unix(&self.path) {
-            Ok(addr) => match self.sock.connect(&addr) {
-                Ok(()) => {
-                    debug!("connect: Connected");
-                    self.switch_to_connected();
-                    0
-                }
-                Err(e) if sys::connect_in_progress(&e) => {
-                    debug!("connect: Connecting");
-                    self.status = ProxyStatus::Connecting;
-                    0
-                }
-                Err(e) => {
-                    debug!("Error connecting: {e}");
-                    -sys::to_linux_errno(&e)
-                }
-            },
+        let result = match unix_connect(&self.sock, &self.path) {
+            Ok(()) => {
+                debug!("connect: Connected");
+                self.switch_to_connected();
+                0
+            }
+            Err(e) if sys::connect_in_progress(&e) => {
+                debug!("connect: Connecting");
+                self.status = ProxyStatus::Connecting;
+                0
+            }
             Err(e) => {
-                debug!("Error building unix address: {e}");
+                debug!("Error connecting: {e}");
                 -sys::to_linux_errno(&e)
             }
         };
@@ -819,8 +813,7 @@ impl UnixAcceptorProxy {
             start.elapsed()
         );
 
-        let addr = SockAddr::unix(path).map_err(ProxyError::CreatingSocket)?;
-        sock.bind(&addr).map_err(ProxyError::CreatingSocket)?;
+        unix_bind(&sock, path).map_err(ProxyError::CreatingSocket)?;
         debug!(
             "[VSOCK_TIMING] UnixAcceptorProxy bound to {:?} in {:?}",
             path,
@@ -1015,4 +1008,24 @@ mod tests {
         }
         assert_eq!(proxy.status, ProxyStatus::Closed);
     }
+}
+
+/// Bind `sock` to `path`, including a macOS path longer than `sun_path`.
+fn unix_bind(sock: &Socket, path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    if let Some(addr) = utils::macos::unix_socket::long_address(path)? {
+        use std::os::unix::io::AsRawFd;
+        return utils::macos::unix_socket::bind(sock.as_raw_fd(), &addr);
+    }
+    sock.bind(&SockAddr::unix(path)?)
+}
+
+/// Connect `sock` to `path`, including a macOS path longer than `sun_path`.
+fn unix_connect(sock: &Socket, path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    if let Some(addr) = utils::macos::unix_socket::long_address(path)? {
+        use std::os::unix::io::AsRawFd;
+        return utils::macos::unix_socket::connect(sock.as_raw_fd(), &addr);
+    }
+    sock.connect(&SockAddr::unix(path)?)
 }
